@@ -19,8 +19,9 @@ final class ExecutorService: SwiftyThreadDelegate
         threads = []
         queue = ArrayBlockingQueue()
         
-        for _ in 0..<threadCount {
+        for i in 0..<threadCount {
             threads.append(SwiftyThread(delegate: self, qos: qos))
+            threads[i].name = String(i)
         }
         
         for thread in threads {
@@ -33,6 +34,9 @@ final class ExecutorService: SwiftyThreadDelegate
     }
     
     func getNextTask() -> (() -> Void)? {
+        queue.lock()
+        defer {queue.unlock()}
+        
         if queue.size() > 0 {
             return queue.next()
         } else {
@@ -41,14 +45,23 @@ final class ExecutorService: SwiftyThreadDelegate
     }
     
     func submit<T>(callable: Callable<T>) -> Future<T> {
+        queue.lock()
+        defer {queue.unlock()}
+        
         let future = Future<T>()
         let task = { future.set(t: callable.call()) }
+        
         queue.insert(task)
+        
         return future
     }
     
     func submit(runnable: Runnable) {
+        queue.lock()
+        defer {queue.unlock()}
+        
         let task = { runnable.run() }
+        
         queue.insert(task)
     }
     
@@ -72,7 +85,7 @@ fileprivate class SwiftyThread: Thread
     override func main() {
         while (true) {
             if let task = swifty_delegate.getNextTask(){
-                print("executing")
+                print("executing", Thread.current.name!)
                 task()
             } else {
                 print("pausing")
@@ -85,24 +98,28 @@ fileprivate class SwiftyThread: Thread
 class ArrayBlockingQueue<T>
 {
     private var array: [T] = []
-    private var lock = NSLock()
+    private var m = pthread_mutex_t()
     
     func insert(_ element: T) {
-        while (!lock.try()) { }
-        defer {lock.unlock()}
+        print("inserting", array.count + 1)
         array.append(element)
     }
     
     func next() -> T {
-        while (!lock.try()) { }
-        defer {lock.unlock()}
+        print("returning", array.count)
         return array.remove(at: 0)
     }
     
     func size() -> Int {
-        while (!lock.try()) { }
-        defer {lock.unlock()}
         return array.count
+    }
+    
+    func lock() {
+        pthread_mutex_lock(&m)
+    }
+    
+    func unlock() {
+        pthread_mutex_unlock(&m)
     }
 }
 
